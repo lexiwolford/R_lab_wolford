@@ -1,0 +1,220 @@
+---
+title: "R Lab Final"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+
+
+```{r, package-loading, echo=FALSE, message=T, warning=FALSE}
+library("dplyr")
+library("RSQLite")
+library("nycflights13") 
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+final_db <- nycflights13_sqlite()
+
+
+flights_sqlite <- tbl(final_db, "flights")
+weather_sqlite <- tbl(final_db, "weather")
+airports_sqlite <- tbl(final_db, "airports")
+planes_sqlite <- tbl(final_db, "planes")
+airlines_sqlite<-tbl(final_db, "airlines")
+
+flights<- data.frame(flights_sqlite, header=TRUE)
+weather<- data.frame(weather_sqlite, header=TRUE)
+airport <- data.frame(airports_sqlite, header=TRUE)
+planes<- data.frame(planes_sqlite, header=TRUE)
+airlines<- data.frame(airlines_sqlite, header=TRUE)
+
+flights = tbl(final_db, "flights") %>% 
+  collect() %>%
+  mutate(canceled = is.na(arr_time))
+
+flights$cancel<-ifelse(flights$canceled==TRUE, 1, 0)
+
+fp_join <- left_join((flights), (planes), by = "tailnum")
+fpa<-left_join(fp_join, airport, by= c("dest"="faa"))
+
+flights<-flights %>%
+  mutate(
+    date = as.Date(paste(month, year,hour,sep="."),format = "%m.%Y.%d.%H")
+  )
+weather_join<-left_join(flights, weather, by=c("year","month","day","hour"))
+```
+
+##Indicating relationship between weather and departure delays
+```{r}
+fws<- ggplot(weather_join,
+             aes(x=visib, y=dep_delay))
+
+fws + geom_point(aes(alpha = 0.01, colour = humid, size = canceled))
+```
+Here we find that visbility increases the occurence of departure delays. There also seems to be a stronger correlation with low humidity and delays over high humidity and delays
+
+
+```{r, echo=F}
+fpa$actual_delay<-ifelse((fpa$dep_delay>0), fpa$dep_delay, NA)
+
+delay_hour <- fpa %>%
+  dplyr::group_by(hour) %>%
+  dplyr::summarise(
+    max_delay = max(actual_delay, na.rm=TRUE),
+    avg_delay = mean(actual_delay, na.rm=TRUE),
+    min_delay = min(actual_delay,na.rm=TRUE),
+    count = n()
+  )
+```
+
+##Indicating relationship between hour and departure delays, Max delays and Avg delays
+
+```{r, echo=FALSE}
+plot(delay_hour$max_delay, type='l', main="Delay Statistics by the Hour", xlab="hour",ylab="delay")
+lines(delay_hour$avg_delay, col = "blue", lty="dashed")
+```
+This plot shows that early morning hours typically experience a delay, ranging from 200 to 
+400 minutes if we reference the average (blue dashed line). After about the
+5th or 6th hour of the day, average delays remain very low, increasing 
+ever so slightly as the day goes on. The extreme flight delays typically occur between the 
+6th and 12th hours of the day. 
+```{r, echo=F}
+delay_day <- fpa %>%
+  dplyr::group_by(day) %>%
+  dplyr::summarise(
+    max_delay = max(actual_delay, na.rm=TRUE),
+    avg_delay = mean(actual_delay, na.rm=TRUE),
+    min_delay = min(actual_delay,na.rm=TRUE),
+    count = n()
+  )
+```
+##Indicating relationship between days and departure delays, Max Delays
+```{r, echo=FALSE}
+delay_day <- fpa %>%
+  dplyr::group_by(day) %>%
+  dplyr::summarise(
+    max_delay = max(actual_delay, na.rm=TRUE),
+    avg_delay = mean(actual_delay, na.rm=TRUE),
+    min_delay = min(actual_delay,na.rm=TRUE),
+    count = n()
+  )
+```
+This plot only shows max delays for days throughout the given month. There is typically a spike in delays with in the 8 to 10 day mark, and then max delays typically die down 
+as the month goes by.
+```{r, echo=FALSE}
+plot(delay_day$max_delay, type='l', main="Delay Max by the Day", xlab="day",ylab="delay")
+```
+
+#Indicating relationship between days and delays, Avg Delays
+```{r, echo=FALSE}
+plot(delay_day$avg_delay, col = "blue", type = 'l', main="Delay Avg by the Day", xlab="day",ylab="delay")
+```
+This represents average delays on a given day and shows very similar behavior to max delays
+```{r, echo=FALSE}
+delay_year <- fpa %>%
+  dplyr::group_by(year.x, month, day) %>%
+  dplyr::summarise(
+    max_delay = max(actual_delay, na.rm=TRUE),
+    avg_delay = mean(actual_delay, na.rm=TRUE),
+    min_delay = min(actual_delay,na.rm=TRUE),
+    count = n()
+  )
+```
+
+##Indicating relationship between Time of Year and delay, Max Delays
+```{r, echo=FALSE}
+plot(delay_year$max_delay, type='l', main="Delay Max by the Time of Year", xlab="Time of Year",ylab="delay")
+```
+From this we can interpret that there is no significant trend in max delays 
+during a given year. 
+
+#Indicating relationship between Time of Year and delay, Avg Delays
+```{r, echo=FALSE}
+plot(delay_year$avg_delay, type="l",col="red", main="Average Delay by the Time of Year", xlab="Time of Year", ylab="delay")
+```
+The same can be concluded for average delays
+
+```{r, echo=FALSE}
+h_cancel<-glm(flights$canceled~flights$hour, family=binomial(link="probit"))
+d_cancel<-glm(flights$canceled~flights$day, family=binomial(link="probit"))
+m_cancel<-glm(flights$canceled~flights$month, family=binomial(link="probit"))
+```
+
+
+#Indicating Relationship between time and cancelation
+```{r, echo=FALSE}
+summary(h_cancel)
+summary(d_cancel)
+summary(m_cancel)
+```
+For cancellations, I chose to run a regression for hour (h_cancel), day (d-Cancel)
+and month (m_cancel). Hours appears to have a positive but very small insignificant
+relationship on cancellations. 
+
+Day appears to have a negative and insignificant relationship on cancellation
+
+Month also appears to have a negative and insiginficant relationship with cancellation
+
+```{r, echo=FALSE}
+delay_dest <- fpa %>%
+  dplyr::group_by(dest) %>%
+  dplyr::summarise(
+    max_delay = max(actual_delay, na.rm=TRUE),
+    avg_delay = mean(actual_delay, na.rm=TRUE),
+    min_delay = min(actual_delay,na.rm=TRUE),
+    count = n()
+  )
+```
+
+##Indicating relationship between destination and delays
+```{r, echo=FALSE}
+delay_dest_obs <- delay_dest %>%
+  dplyr::arrange(avg_delay, dest)
+```
+
+```{r, echo=FALSE}
+head(delay_dest_obs)
+```
+This give the 6 destinations with the least amount of delays. 
+
+```{r, echo=FALSE}
+dest_cancel<-glm(flights$canceled~flights$dest, family=binomial(link="probit"))
+```
+
+#Indicating Relationship between destinations and cancellations
+
+```{r, echo=FALSE}
+summary(dest_cancel)
+```
+Here I've run a regression of flights cancelled on destinations. All destinations appear
+to have a positive but very insignificant relationship with cancellations.
+We can interpret that destinations will not really determine whether there is a cancellation. 
+
+##Indicating relationship between plane characteristics and Delays
+
+```{r, echo=FALSE, warning=FALSE}
+delay.type<-ggplot(fpa,
+                    aes(x=type, y=dep_delay))
+delay.type + geom_point(aes(colour=origin, alpha=0.5))
+```
+From this we can interpret that the Fixed wing multi engine leads to the most delays compared to the fixed wing singe engine and the Rotorcraft. 
+
+
+## Indicating relationship between plane characteristics and Cancellations
+```{r, echo=FALSE, warning=FALSE}
+cancel.type<-ggplot(fpa,
+                   aes(x=seats, y=engine))
+cancel.type + geom_point(aes(colour=cancel, alpha=0.5))
+```
+Blue dots are indicated by a flight being cancelled and black dots are indicated
+by flights not being cancelled. From here we can see that a flight is more likely to be 
+cancelled if it has fewer seats and is a turbo-jet plane or a turbo-fan plane. 
